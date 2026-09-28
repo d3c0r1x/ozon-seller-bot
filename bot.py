@@ -90,6 +90,52 @@ def _html_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+_STATUS_RU = {
+    "awaiting_packaging": "🕓 Ждёт упаковки",
+    "awaiting_deliver": "🕓 Ждёт отгрузки",
+    "arbitration": "⚖️ Арбитраж",
+    "delivering": "🚚 В доставке",
+    "delivered": "✅ Доставлен",
+    "cancelled": "❌ Отменён",
+}
+
+
+@router.message(Command("orders"))
+async def cmd_orders(message: Message) -> None:
+    """FBS-отправления за сутки: статусы, суммы, алерт о новых."""
+    if not _check_access(message):
+        return
+    status = await message.answer("📦 Загружаю отправления…")
+    try:
+        orders, is_demo = await ozon_api.fetch_fbs_orders(hours=24)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Ошибка загрузки отправлений")
+        await status.edit_text(f"⚠️ Ошибка: {exc}")
+        return
+
+    if not orders:
+        await status.edit_text("За сутки отправлений нет.")
+        return
+
+    prev_numbers = await db.prev_order_numbers()
+    new_numbers = [o for o in orders if o["number"] not in prev_numbers]
+    await db.save_order_numbers({o["number"] for o in orders})
+
+    lines = [f"📦 <b>FBS за 24 ч:</b> {len(orders)} отправлений\n"]
+    new_first = new_numbers + [o for o in orders if o not in new_numbers]
+    for o in new_first[:8]:
+        ru = _STATUS_RU.get(o["status"], o["status"])
+        badge = " 🆕" if o in new_numbers else ""
+        lines.append(
+            f"{ru}{badge} — <b>{_money(o['price'])} ₽</b>\n"
+            f"    <code>{_html_escape(o['number'])}</code> · {o['created_at']}"
+        )
+    if is_demo:
+        lines.append("\n⚠️ <i>Демо-режим.</i>")
+    await status.edit_text("\n".join(lines))
+
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     if not _check_access(message):
@@ -100,6 +146,7 @@ async def cmd_start(message: Message) -> None:
         "/stock — контроль остатков: что заканчивается\n"
         "/top — топ товаров по выручке\n"
         "/chart — график выручки за 14 дней\n"
+        "/orders — FBS-отправления за сутки со статусами\n"
         "/alerts — автоалерты: сводка по расписанию и «товар закончился»\n"
         "/refresh — обновить данные из API\n\n"
         "Данные обновляются при каждом /refresh и перед сводкой."

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import random
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -15,6 +16,65 @@ import httpx
 import config
 
 _API_URL = "https://api-seller.ozon.ru"
+
+
+async def fetch_products() -> tuple[list[dict[str, Any]], bool]:
+    """Возвращает (товары, is_demo). В демо-режиме данные генерируются локально."""
+    if config.DEMO_MODE:
+        return _demo_products(), True
+
+
+async def fetch_fbs_orders(hours: int = 24) -> tuple[list[dict[str, Any]], bool]:
+    """FBS-отправления за последние часы: статус и состав (упрощение MVP).
+
+    Реальный режим: POST /v3/posting/fbs/list с фильтром по времени.
+    Демо: детерминированный набор отправлений.
+    """
+    if config.DEMO_MODE:
+        return _demo_orders(), True
+
+    since = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
+    async with httpx.AsyncClient(timeout=30) as client:
+        headers = {
+            "Client-Id": config.OZON_CLIENT_ID,
+            "Api-Key": config.OZON_API_KEY,
+            "Content-Type": "application/json",
+        }
+        resp = await client.post(
+            f"{_API_URL}/v3/posting/fbs/list",
+            json={
+                "dir": "ASC",
+                "filter": {"since": since.isoformat(), "status": ""},
+                "limit": 50,
+            },
+            headers=headers,
+        )
+        resp.raise_for_status()
+        postings = resp.json().get("result", {}).get("postings", [])
+        orders = []
+        for p in postings:
+            products = [
+                {
+                    "offer_id": str(x.get("sku", "")),
+                    "quantity": int(x.get("quantity", 1)),
+                    "price": float(x.get("price", "0") or 0),
+                }
+                for x in p.get("products", [])
+            ]
+            orders.append(
+                {
+                    "number": str(p.get("posting_number", "")),
+                    "status": str(p.get("status", "")),
+                    "created_at": str(p.get("created_at", ""))[:16].replace("T", " "),
+                    "price": float(p.get("financial_data", {}).get("products_sum", 0) or 0)
+                    or sum(x["price"] * x["quantity"] for x in products),
+                    "products": products,
+                }
+            )
+        return orders, False
+
+
+_DEMO_STATUSES = ["awaiting_packaging", "awaiting_packaging", "arbitration", "delivering", "delivered"]
 
 
 async def fetch_products() -> tuple[list[dict[str, Any]], bool]:
@@ -80,6 +140,26 @@ _DEMO_TITLES = [
     "Переходник USB-C → HDMI",
     "Микрофон петличный USB-C",
 ]
+
+
+def _demo_orders() -> list[dict[str, Any]]:
+    """Детерминированные FBS-отправления за сутки (для /orders в демо)."""
+    rng = random.Random(7)
+    products = _demo_products()
+    orders = []
+    for i in range(6):
+        item = rng.choice(products)
+        qty = rng.randint(1, 3)
+        orders.append(
+            {
+                "number": f"0002-{rng.randint(1, 9)}{'A' if rng.random() < 0.5 else 'B'}-{rng.randint(1000, 9999)}",
+                "status": _DEMO_STATUSES[i % len(_DEMO_STATUSES)],
+                "created_at": f"2026-09-2{8 - i} 1{4 - i}:32",
+                "price": round(item["price"] * qty, 2),
+                "products": [{"offer_id": item["offer_id"], "quantity": qty, "price": item["price"]}],
+            }
+        )
+    return orders
 
 
 def demo_revenue_history(days: int = 14) -> list[float]:

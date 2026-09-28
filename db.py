@@ -40,6 +40,10 @@ class Database:
                     price REAL,
                     rating REAL
                 );
+
+                CREATE TABLE IF NOT EXISTS seen_orders (
+                    number TEXT PRIMARY KEY
+                );
                 """
             )
 
@@ -133,5 +137,22 @@ class Database:
             await db.executemany(
                 "INSERT INTO snapshots (offer_id, price, rating) VALUES (?, ?, ?)",
                 [(p["offer_id"], p["price"], p["rating"]) for p in products],
+            )
+            await db.commit()
+
+    # --- FBS-отправления ---
+
+    async def prev_order_numbers(self) -> set[str]:
+        """Номера отправлений, которые уже показывались (для пометки 🆕)."""
+        async with aiosqlite.connect(self.path) as db:
+            rows = await (await db.execute("SELECT number FROM seen_orders")).fetchall()
+        return {r[0] for r in rows}
+
+    async def save_order_numbers(self, numbers: set[str]) -> None:
+        """Запоминаем номера, чтобы при следующем /orders помечать только новые."""
+        async with aiosqlite.connect(self.path) as db:
+            await db.executemany(
+                "INSERT OR IGNORE INTO seen_orders (number) VALUES (?)",
+                [(n,) for n in numbers],
             )
             await db.commit()
