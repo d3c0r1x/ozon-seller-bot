@@ -1,60 +1,153 @@
 # Ozon Seller Bot
 
+> **Прикладной MVP-проект.** Я использовал его как практическую автоматизацию для продавца Ozon: получение показателей магазина, контроль остатков, FBS-заказы и плановые уведомления в Telegram.
+>
+> Это не главный флагман портфолио, но проект показывает работу с реальным marketplace API и бизнес-ориентированной логикой.
+
 [![CI](https://github.com/d3c0r1x/ozon-seller-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/d3c0r1x/ozon-seller-bot/actions/workflows/ci.yml)
 
-MVP-бот для продавцов Ozon: сводка магазина в Telegram — выручка и заказы, контроль остатков, топ товаров. Работает через Seller API Ozon; **без ключей включается демо-режим** с детерминированными данными, чтобы показать функционал без доступа к магазину.
+## Что делает
 
-## Возможности
+Приватный Telegram-бот для владельца магазина Ozon.
 
-- **/summary** — дневная сводка: товаров, заказов, выручка, проблемные остатки, топ-5 по выручке;
-- **/stock** — контроль остатков: 🔴 нет в наличии, 🟡 мало на складе (порог настраивается);
-- **/top** — топ-10 товаров по выручке с рейтингами;
-- **/chart** — график выручки за 14 дней (PNG, тёмная тема, пик недели подсвечен);
-- **/orders** — FBS-отправления за сутки: статусы на русском, суммы, новые помечены 🆕; плюс плановая рассылка о новых заказах каждый час (выключается `ORDERS_CHECK_MINUTE=0`);
-- **/refresh** — принудительное обновление данных из API;
-- **/alerts** — автоалерты: дневная сводка по расписанию (9:00 МСК) и проверки в 9:30/21:30 — «товар закончился», падение цены ≥10%, рейтинг ниже 4.5 (пороги настраиваются);
-- **демо-режим**: нет ключей Seller API → данные генерируются детерминированно (12 товаров, seed=42), помечаются как демо; тесты и демо воспроизводимы;
-- доступ только у владельца (`ADMIN_IDS`): личный кабинет магазина, а не публичный бот.
+Команды:
+
+| Команда | Что показывает |
+|---|---|
+| `/summary` | товары, заказы, выручка, проблемные остатки, top-5 |
+| `/stock` | out-of-stock и low-stock |
+| `/top` | топ-10 товаров по выручке |
+| `/chart` | график выручки за 14 дней |
+| `/orders` | FBS-отправления за сутки |
+| `/refresh` | принудительно обновить данные |
+| `/alerts` | состояние автоалертов |
+
+Бот работает только для пользователей из `ADMIN_IDS`.
+
+## Demo mode
+
+Без Seller API credentials бот не падает.
+
+Он включает детерминированный demo mode:
+
+- 12 условных товаров;
+- воспроизводимые значения;
+- те же бизнес-сценарии;
+- можно показать проект без доступа к реальному магазину.
+
+## Архитектура
+
+```
+Telegram
+   ↓
+bot.py
+   ├── Ozon Seller API
+   ├── demo provider
+   ├── SQLite cache
+   ├── charts
+   └── APScheduler alerts
+```
+
+## Структура
+
+```
+bot.py          # Telegram handlers / menu / scheduled jobs
+ozon_api.py     # Ozon Seller API + deterministic demo
+db.py           # SQLite cache
+charts.py       # matplotlib charts
+config.py       # environment configuration
+```
 
 ## Запуск
 
+Требования:
+
+- Python 3.11+;
+- Telegram Bot Token.
+
+Установка:
+
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-copy .env.example .env   # впишите OZON_SELLER_BOT_TOKEN и ADMIN_IDS
+```
+
+Windows:
+
+```bat
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Создать `.env` на основе [.env.example](.env.example):
+
+```
+OZON_SELLER_BOT_TOKEN=123456:ABC...
+ADMIN_IDS=123456789
+```
+
+Запуск:
+
+```bash
 python bot.py
 ```
 
-Для реального магазина добавьте в `.env`:
+Без `OZON_CLIENT_ID` и `OZON_API_KEY` запускается demo mode.
+
+## Подключение реального магазина
+
+В Ozon Seller API создаются credentials, после чего:
 
 ```
 OZON_CLIENT_ID=...
 OZON_API_KEY=...
 ```
 
-(https://seller.ozon.ru → Настройки → API-ключи). Без них бот честно скажет, что работает в демо-режиме.
+После этого `ozon_api.py` обращается к Seller API, а остальная бизнес-логика остаётся той же.
 
-## Архитектура
+## Плановые проверки
 
-- `bot.py` — aiogram 3: команды, доступ по `ADMIN_IDS`, тексты сводок;
-- `ozon_api.py` — клиент Seller API (`/v3/product/list`, `/v4/product/info/prices`) + детерминированный демо-слой;
-- `db.py` — кэш товаров в SQLite (aiosqlite);
-- `charts.py` — графики matplotlib (PNG в памяти, тёмная тема);
-- таблица роадмапа — см. выше: 4 выполнено, 1 в планах.
-- `config.py` — переменные окружения через `python-dotenv`.
+Система использует scheduler.
 
-## Roadmap MVP
+В проекте реализованы:
 
-- [x] плановая дневная сводка по расписанию (APScheduler, AsyncIOScheduler);
-- [x] алерт «товар закончился»: сравнение с прошлой проверкой, только новые stockout'ы;
-- [x] динамика выручки по дням (график /chart);
-- [x] алерты: цена упала ≥10% и рейтинг ниже порога (по снапшотам прошлой проверки);
-- [x] FBS-заказы: отправления за сутки, статусы, новые помечены 🆕;
-- [x] плановая рассылка новых FBS-отправлений (каждый час, настраивается `ORDERS_CHECK_MINUTE`);
+- дневная сводка;
+- проверки out-of-stock;
+- падение цены ≥ 10%;
+- рейтинг ниже порога;
+- регулярная проверка FBS-отправлений.
 
-## 🇬🇧 English
+## Графики
 
-**Ozon Seller Bot** — an MVP Telegram bot for Ozon marketplace sellers: daily store summary (revenue, orders, stock alerts, top products), low-stock control and instant "out of stock" alerts. Built on the Ozon Seller API with a deterministic demo mode (no keys required — reproducible demo data, covered by CI). Personal-store access control via `ADMIN_IDS`.
+`/chart` строит PNG-график динамики выручки за 14 дней.
+
+Вся визуализация создаётся из кэшированных данных и не требует отдельного frontend.
+
+## Тестирование
+
+CI запускает тесты и deterministic demo path.
+
+Для локальной проверки:
+
+```bash
+pytest -q
+```
+
+## Ограничения
+
+- MVP рассчитан на личный магазин;
+- API Ozon может меняться;
+- для production лучше разделить background jobs и Telegram process;
+- SQLite подходит для этого масштаба, но для multi-tenant сервиса потребовалась бы другая архитектура.
+
+## AI-assisted development
+
+AI использовался для чернового кода, тестовых идей и рутинных частей.
+
+Архитектуру, интеграцию API, debugging и итоговое поведение проекта я проверял сам.
 
 ## Лицензия
 
-MIT — см. [LICENSE](LICENSE).
+MIT.
