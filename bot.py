@@ -318,6 +318,37 @@ async def check_stockouts(bot: Bot) -> None:
             logger.warning("Не доставили алерты в %s", chat_id)
 
 
+async def check_new_orders(bot: Bot) -> None:
+    """Плановая проверка: новые FBS-отправления с прошлого раза -> алерт."""
+    try:
+        orders, is_demo = await ozon_api.fetch_fbs_orders(hours=config.ORDERS_LOOKBACK_HOURS)
+    except Exception:  # noqa: BLE001 — планировщик не должен падать
+        logger.exception("Не получили FBS-отправления")
+        return
+    if is_demo or not orders:
+        return
+    prev = await db.prev_order_numbers()
+    new = [o for o in orders if o["number"] not in prev]
+    if not new:
+        return
+    await db.save_order_numbers({o["number"] for o in orders})
+    total = sum(o["price"] for o in new)
+    lines = [
+        f"📬 <b>Новые FBS-отправления: {len(new)}</b> на {_money(total)} ₽",
+        "",
+    ]
+    for o in new[:5]:
+        ru = _STATUS_RU.get(o["status"], o["status"])
+        lines.append(f"{ru} — {_money(o['price'])} ₽ · <code>{_html_escape(o['number'])}</code>")
+    if len(new) > 5:
+        lines.append(f"…и ещё {len(new) - 5}")
+    for chat_id in await db.digest_subscribers():
+        try:
+            await bot.send_message(chat_id, "\n".join(lines))
+        except Exception:  # noqa: BLE001
+            logger.warning("Не доставили алерт о заказах в %s", chat_id)
+
+
 async def main() -> None:
     if not config.BOT_TOKEN:
         raise SystemExit(
@@ -329,11 +360,13 @@ async def main() -> None:
     dp = Dispatcher()
     dp.include_router(router)
 
-    # Плановые задачи: дневная сводка + проверки обнуления остатков
+    # Плановые задачи: дневная сводка + проверки (остатки, цены, рейтинги, новые FBS)
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     scheduler.add_job(send_digest, CronTrigger(hour=config.DIGEST_HOUR, minute=0), args=[bot])
     for hour in config.STOCK_CHECK_HOURS:
         scheduler.add_job(check_stockouts, CronTrigger(hour=hour, minute=30), args=[bot])
+    if config.ORDERS_CHECK_ENABLED:
+        scheduler.add_job(check_new_orders, CronTrigger(minute=config.ORDERS_CHECK_MINUTE), args=[bot])
     scheduler.start()
 
     logger.info("Запуск бота (demo=%s)", config.DEMO_MODE)

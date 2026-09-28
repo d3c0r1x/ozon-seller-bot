@@ -35,5 +35,11 @@ PRICE_DROP_PCT = int(os.getenv("PRICE_DROP_PCT", "10"))
 # Рейтинг ниже этого значения — алерт
 RATING_ALERT_BELOW = float(os.getenv("RATING_ALERT_BELOW", "4.5"))
 
+# Плановая проверка новых FBS-отправлений: раз в N минут (0 — выключить)
+ORDERS_CHECK_MINUTE = int(os.getenv("ORDERS_CHECK_MINUTE", "45"))
+ORDERS_CHECK_ENABLED = ORDERS_CHECK_MINUTE > 0
+# Заглядывать вглубь на случай пропущенных проверок
+ORDERS_LOOKBACK_HOURS = int(os.getenv("ORDERS_LOOKBACK_HOURS", "2"))
+
 # База
 DB_PATH = os.getenv("OZON_SELLER_DB", "seller_bot.db")
