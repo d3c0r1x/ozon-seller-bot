@@ -26,5 +26,8 @@ DEFAULT_LOW_STOCK = 10
 # Час дневной сводки (локальное время)
 DIGEST_HOUR = int(os.getenv("DIGEST_HOUR", "9"))
 
+# Часы проверок «товар закончился» (после сводки и вечером)
+STOCK_CHECK_HOURS = [9, 21]
+
 # База
 DB_PATH = os.getenv("OZON_SELLER_DB", "seller_bot.db")

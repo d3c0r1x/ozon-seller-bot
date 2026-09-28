@@ -12,6 +12,8 @@ import logging
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 import config
 import db as db_module
@@ -163,6 +165,53 @@ async def cmd_refresh(message: Message) -> None:
         await status.edit_text(f"⚠️ Ошибка обновления: {exc}")
 
 
+@router.message(Command("alerts"))
+async def cmd_alerts(message: Message) -> None:
+    """Подписка/отписка на автоматические алерты: сводка по расписанию + «товар закончился»."""
+    if not _check_access(message):
+        return
+    await db.toggle_digest(message.from_user.id)
+    on = await db.digest_enabled(message.from_user.id)
+    state = "включены" if on else "выключены"
+    hours = ", ".join(str(h) for h in config.STOCK_CHECK_HOURS)
+    await message.answer(
+        f"{'🔔' if on else '🔕'} Автоалерты <b>{state}</b>.\n"
+        f"• Дневная сводка — ежедневно в {config.DIGEST_HOUR}:00\n"
+        f"• «Товар закончился» — проверки в {hours}"
+    )
+
+
+async def send_digest(bot: Bot) -> None:
+    """Плановая дневная сводка всем, у кого алерты включены."""
+    products, is_demo = await _refresh()
+    text = f"⏰ <b>Автосводка {config.DIGEST_HOUR}:00</b>\n\n" + _digest_text(products, is_demo)
+    for chat_id in await db.digest_subscribers():
+        try:
+            await bot.send_message(chat_id, text)
+        except Exception:  # noqa: BLE001 — один недоступный чат не срывает рассылку
+            logger.warning("Не доставили сводку в %s", chat_id)
+
+
+async def check_stockouts(bot: Bot) -> None:
+    """Алерты «товар закончился»: остаток стал нулевым с прошлой проверки."""
+    products, is_demo = await _refresh()
+    current = {p["offer_id"] for p in products if p["stock"] == 0}
+    previous = await db.prev_stockouts()
+    new = current - previous
+    await db.save_stockouts(current)
+    if not new or is_demo:
+        return
+    titles = {p["offer_id"]: p["title"] for p in products}
+    lines = ["🚨 <b>Закончился товар:</b>"] + [
+        f"• {_html_escape(titles.get(oid, oid)[:45])}" for oid in list(new)[:5]
+    ]
+    for chat_id in await db.digest_subscribers():
+        try:
+            await bot.send_message(chat_id, "\n".join(lines))
+        except Exception:  # noqa: BLE001
+            logger.warning("Не доставили алерт в %s", chat_id)
+
+
 async def main() -> None:
     if not config.BOT_TOKEN:
         raise SystemExit(
@@ -173,6 +222,14 @@ async def main() -> None:
     bot = Bot(token=config.BOT_TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
+
+    # Плановые задачи: дневная сводка + проверки обнуления остатков
+    scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+    scheduler.add_job(send_digest, CronTrigger(hour=config.DIGEST_HOUR, minute=0), args=[bot])
+    for hour in config.STOCK_CHECK_HOURS:
+        scheduler.add_job(check_stockouts, CronTrigger(hour=hour, minute=30), args=[bot])
+    scheduler.start()
+
     logger.info("Запуск бота (demo=%s)", config.DEMO_MODE)
     await dp.start_polling(bot)
 
