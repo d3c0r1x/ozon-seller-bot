@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Установить зависимости
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Бот в CI не запускается: проверяем компиляцию и демо-слой без ключей
+      - name: Компиляция
+        run: python -m py_compile bot.py config.py ozon_api.py db.py
+
+      - name: Демо-данные детерминированы
+        run: |
+          python - <<'PY'
+          import asyncio, ozon_api
+          a, demo = asyncio.run(ozon_api.fetch_products())
+          b, _ = asyncio.run(ozon_api.fetch_products())
+          assert demo, "ожидали демо-режим без ключей"
+          assert a == b, "демо-данные должны быть воспроизводимыми"
+          assert len(a) == 12, f"ожидали 12 демо-товаров, получено {len(a)}"
+          print(f"OK: {len(a)} демо-товаров, воспроизводимо")
+          PY
