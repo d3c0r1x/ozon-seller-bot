@@ -199,7 +199,8 @@ async def cmd_alerts(message: Message) -> None:
     await message.answer(
         f"{'🔔' if on else '🔕'} Автоалерты <b>{state}</b>.\n"
         f"• Дневная сводка — ежедневно в {config.DIGEST_HOUR}:00\n"
-        f"• «Товар закончился» — проверки в {hours}"
+        f"• Проверки в {hours}:30: «товар закончился», падение цены ≥{config.PRICE_DROP_PCT}%, "
+        f"рейтинг <{config.RATING_ALERT_BELOW}"
     )
 
 
@@ -215,23 +216,59 @@ async def send_digest(bot: Bot) -> None:
 
 
 async def check_stockouts(bot: Bot) -> None:
-    """Алерты «товар закончился»: остаток стал нулевым с прошлой проверки."""
+    """Проверка после изменений: stockout'ы, падение цены, низкий рейтинг."""
     products, is_demo = await _refresh()
-    current = {p["offer_id"] for p in products if p["stock"] == 0}
-    previous = await db.prev_stockouts()
-    new = current - previous
-    await db.save_stockouts(current)
-    if not new or is_demo:
+    if is_demo:
+        # В демо-режиме данные не меняются — алертов нет, но снапшоты поддерживаем.
+        await db.save_snapshots(products)
+        return
+
+    # 1) «товар закончился»: новые обнуления остатка
+    current_out = {p["offer_id"] for p in products if p["stock"] == 0}
+    new_out = current_out - await db.prev_stockouts()
+    await db.save_stockouts(current_out)
+
+    # 2) падение цены и низкий рейтинг — сравнение со снапшотом прошлой проверки
+    prev = await db.prev_snapshots()
+    price_drops: list[tuple[str, str, float]] = []
+    low_ratings: list[tuple[str, str, float]] = []
+    for p in products:
+        old = prev.get(p["offer_id"])
+        if old:
+            old_price, old_rating = old
+            if old_price > 0 and p["price"] < old_price * (100 - config.PRICE_DROP_PCT) / 100:
+                pct = (1 - p["price"] / old_price) * 100
+                price_drops.append((p["offer_id"], p["title"], pct))
+            if 0 < p["rating"] < config.RATING_ALERT_BELOW and old_rating >= config.RATING_ALERT_BELOW:
+                low_ratings.append((p["offer_id"], p["title"], p["rating"]))
+        elif p["rating"] and p["rating"] < config.RATING_ALERT_BELOW:
+            low_ratings.append((p["offer_id"], p["title"], p["rating"]))
+    await db.save_snapshots(products)
+
+    # 3) доставка: одна сводка алертов вместо трёх сообщений
+    if not (new_out or price_drops or low_ratings):
         return
     titles = {p["offer_id"]: p["title"] for p in products}
-    lines = ["🚨 <b>Закончился товар:</b>"] + [
-        f"• {_html_escape(titles.get(oid, oid)[:45])}" for oid in list(new)[:5]
-    ]
+    lines: list[str] = ["🚨 <b>Алерты магазина:</b>"]
+    if new_out:
+        lines.append("\n<b>Закончился товар:</b>")
+        lines += [f"• {_html_escape(titles.get(oid, oid)[:45])}" for oid in list(new_out)[:5]]
+    if price_drops:
+        lines.append(f"\n<b>Цена упала ≥ {config.PRICE_DROP_PCT}%:</b>")
+        lines += [
+            f"• {_html_escape(t[:40])} — −{pct:.0f}%"
+            for _, t, pct in price_drops[:5]
+        ]
+    if low_ratings:
+        lines.append(f"\n<b>Рейтинг ниже {config.RATING_ALERT_BELOW}:</b>")
+        lines += [
+            f"• {_html_escape(t[:40])} — ★ {r}" for _, t, r in low_ratings[:5]
+        ]
     for chat_id in await db.digest_subscribers():
         try:
             await bot.send_message(chat_id, "\n".join(lines))
         except Exception:  # noqa: BLE001
-            logger.warning("Не доставили алерт в %s", chat_id)
+            logger.warning("Не доставили алерты в %s", chat_id)
 
 
 async def main() -> None:

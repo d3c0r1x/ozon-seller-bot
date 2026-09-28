@@ -34,6 +34,12 @@ class Database:
                 CREATE TABLE IF NOT EXISTS stockouts (
                     offer_id TEXT PRIMARY KEY
                 );
+
+                CREATE TABLE IF NOT EXISTS snapshots (
+                    offer_id TEXT PRIMARY KEY,
+                    price REAL,
+                    rating REAL
+                );
                 """
             )
 
@@ -107,5 +113,25 @@ class Database:
             await db.executemany(
                 "INSERT INTO stockouts (offer_id) VALUES (?)",
                 [(oid,) for oid in offer_ids],
+            )
+            await db.commit()
+
+    # --- снапшоты цен/рейтингов для алертов ---
+
+    async def prev_snapshots(self) -> dict[str, tuple[float, float]]:
+        """{offer_id: (price, rating)} с прошлой проверки."""
+        async with aiosqlite.connect(self.path) as db:
+            rows = await (
+                await db.execute("SELECT offer_id, price, rating FROM snapshots")
+            ).fetchall()
+        return {r[0]: (r[1], r[2]) for r in rows}
+
+    async def save_snapshots(self, products: list[dict[str, Any]]) -> None:
+        """Полная замена снапшотов цен/рейтингов текущими товарами."""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM snapshots")
+            await db.executemany(
+                "INSERT INTO snapshots (offer_id, price, rating) VALUES (?, ?, ?)",
+                [(p["offer_id"], p["price"], p["rating"]) for p in products],
             )
             await db.commit()

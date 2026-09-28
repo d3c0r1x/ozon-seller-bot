@@ -29,5 +29,11 @@ DIGEST_HOUR = int(os.getenv("DIGEST_HOUR", "9"))
 # Часы проверок «товар закончился» (после сводки и вечером)
 STOCK_CHECK_HOURS = [9, 21]
 
+# Порог падения цены, % от прошлой проверки: больше — алерт
+PRICE_DROP_PCT = int(os.getenv("PRICE_DROP_PCT", "10"))
+
+# Рейтинг ниже этого значения — алерт
+RATING_ALERT_BELOW = float(os.getenv("RATING_ALERT_BELOW", "4.5"))
+
 # База
 DB_PATH = os.getenv("OZON_SELLER_DB", "seller_bot.db")
