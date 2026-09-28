@@ -15,6 +15,7 @@ from aiogram.types import Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+import charts
 import config
 import db as db_module
 import ozon_api
@@ -98,6 +99,8 @@ async def cmd_start(message: Message) -> None:
         "/summary — дневная сводка: выручка, заказы, остатки\n"
         "/stock — контроль остатков: что заканчивается\n"
         "/top — топ товаров по выручке\n"
+        "/chart — график выручки за 14 дней\n"
+        "/alerts — автоалерты: сводка по расписанию и «товар закончился»\n"
         "/refresh — обновить данные из API\n\n"
         "Данные обновляются при каждом /refresh и перед сводкой."
     )
@@ -163,6 +166,25 @@ async def cmd_refresh(message: Message) -> None:
     except Exception as exc:  # noqa: BLE001 — MVP: показываем ошибку пользователю
         logger.exception("Ошибка обновления")
         await status.edit_text(f"⚠️ Ошибка обновления: {exc}")
+
+
+@router.message(Command("chart"))
+async def cmd_chart(message: Message) -> None:
+    """График выручки за 14 дней (в демо-режиме — детерминированная динамика)."""
+    if not _check_access(message):
+        return
+    status = await message.answer("📊 Строю график…")
+    series = ozon_api.demo_revenue_history(14)
+    photo = charts.render_revenue(series, is_demo=True)
+    await status.delete()
+    await message.answer_photo(
+        photo,
+        caption=(
+            "📊 <b>Динамика выручки за 14 дней.</b>\n"
+            "Пик недели подсвечен. В демо-режиме — модельные данные; "
+            "с ключами Seller API здесь будет фактическая выручка магазина."
+        ),
+    )
 
 
 @router.message(Command("alerts"))

@@ -82,6 +82,18 @@ _DEMO_TITLES = [
 ]
 
 
+def demo_revenue_history(days: int = 14) -> list[float]:
+    """Детерминированная дневная выручка за последние N дней (для /chart в демо)."""
+    rng = random.Random(42)
+    base = sum(p["revenue"] for p in _demo_products()) / days
+    series = []
+    for i in range(days):
+        # недельная волна: выходные выше + шум
+        factor = 1.25 if (i % 7) in (5, 6) else 1.0
+        series.append(round(base * factor * rng.uniform(0.75, 1.25), 2))
+    return series
+
+
 def _demo_products() -> list[dict[str, Any]]:
     rng = random.Random(42)  # фиксируем seed: демо воспроизводимо
     products = []
